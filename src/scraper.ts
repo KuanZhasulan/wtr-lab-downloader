@@ -12,7 +12,6 @@ export interface BookMeta {
   coverUrl?: string;
 }
 
-const BASE_URL = "https://wtr-lab.com";
 const DELAY_MS = 1500;
 
 function sleep(ms: number) {
