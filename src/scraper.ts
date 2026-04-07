@@ -19,7 +19,8 @@ function sleep(ms: number) {
 }
 
 async function waitForContent(page: Page) {
-  await page.waitForLoadState("networkidle", { timeout: 30_000 });
+  await page.waitForLoadState("load", { timeout: 30_000 });
+  await sleep(800);
 }
 
 export type ProgressCallback = (current: number, total: number, chapterTitle: string) => void;
