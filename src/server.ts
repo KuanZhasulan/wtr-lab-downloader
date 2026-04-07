@@ -1,5 +1,5 @@
 import express from "express";
-import { scrapeBook } from "./scraper.js";
+import { scrapeBook, debugPageLinks } from "./scraper.js";
 import { buildEpub } from "./epub.js";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -270,6 +270,19 @@ app.get("/result/:jobId", (req, res) => {
   res.sendFile(entry.path, () => {
     unlink(entry.path).catch(() => {});
   });
+});
+
+// Debug endpoint — visit /debug?url=<novel-url> to see all links found on the page
+app.get("/debug", async (req, res) => {
+  const { url } = req.query as { url?: string };
+  if (!url) { res.status(400).send("?url= required"); return; }
+  try {
+    const result = await debugPageLinks(url);
+    res.setHeader("Content-Type", "application/json");
+    res.send(JSON.stringify(result, null, 2));
+  } catch (err) {
+    res.status(500).send(err instanceof Error ? err.message : String(err));
+  }
 });
 
 app.listen(PORT, () => {

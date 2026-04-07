@@ -23,6 +23,35 @@ async function waitForContent(page: Page) {
   await sleep(800);
 }
 
+export async function debugPageLinks(novelUrl: string) {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    });
+    const page = await context.newPage();
+    await page.goto(novelUrl, { waitUntil: "domcontentloaded" });
+    await waitForContent(page);
+
+    return page.evaluate(() => {
+      const allLinks = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
+      return {
+        totalLinks: allLinks.length,
+        // All unique href patterns (deduplicated by path prefix)
+        sampleHrefs: [...new Set(allLinks.map(a => a.href))].slice(0, 80),
+        // Text of links that look like chapters
+        possibleChapterLinks: allLinks
+          .filter(a => /chapter|serie|ep\d|ch\d/i.test(a.href) || /chapter\s*\d/i.test(a.textContent ?? ""))
+          .map(a => ({ href: a.href, text: a.textContent?.trim().slice(0, 60) }))
+          .slice(0, 50),
+        pageTitle: document.title,
+      };
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 export type ProgressCallback = (current: number, total: number, chapterTitle: string) => void;
 
 export async function scrapeBook(
