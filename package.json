@@ -9,8 +9,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "tsx src/index.ts",
-    "dev": "tsx src/index.ts"
+    "start": "node dist/server.js",
+    "dev:server": "tsx src/server.ts",
+    "dev:cli": "tsx src/index.ts"
   },
   "repository": {
     "type": "git",
@@ -29,8 +30,12 @@
     "cheerio": "^1.2.0",
     "commander": "^14.0.3",
     "epub-gen-memory": "^1.1.2",
+    "express": "^5.2.1",
     "playwright": "^1.59.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
   }
 }
