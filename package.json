@@ -1,0 +1,36 @@
+{
+  "name": "wtr-lab-downloader",
+  "version": "1.0.0",
+  "description": "The script to download books from wtr-lab.com",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "wtr-lab-dl": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "dev": "tsx src/index.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KuanZhasulan/wtr-lab-downloader.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/KuanZhasulan/wtr-lab-downloader/issues"
+  },
+  "homepage": "https://github.com/KuanZhasulan/wtr-lab-downloader#readme",
+  "dependencies": {
+    "@types/cheerio": "^1.0.0",
+    "@types/node": "^25.5.2",
+    "cheerio": "^1.2.0",
+    "commander": "^14.0.3",
+    "epub-gen-memory": "^1.1.2",
+    "playwright": "^1.59.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}
