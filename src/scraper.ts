@@ -22,11 +22,14 @@ async function waitForContent(page: Page) {
   await page.waitForLoadState("networkidle", { timeout: 30_000 });
 }
 
+export type ProgressCallback = (current: number, total: number, chapterTitle: string) => void;
+
 export async function scrapeBook(
   novelUrl: string,
   fromChapter: number,
   toChapter: number | null,
-  headless: boolean
+  headless: boolean,
+  onProgress?: ProgressCallback
 ): Promise<{ meta: BookMeta; chapters: Chapter[] }> {
   const browser = await chromium.launch({ headless });
   try {
@@ -61,8 +64,10 @@ export async function scrapeBook(
         const chapter = await scrapeChapterContent(page, chapterNum);
         chapters.push(chapter);
         console.log(`done (${chapter.content.length} chars)`);
+        onProgress?.(i + 1, selected.length, chapter.title);
       } catch (err) {
         console.log(`FAILED: ${err}`);
+        onProgress?.(i + 1, selected.length, `Chapter ${chapterNum} (failed)`);
       }
       if (i < selected.length - 1) await sleep(DELAY_MS);
     }
