@@ -4,12 +4,16 @@ import { buildEpub } from "./epub.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import { unlink } from "fs/promises";
+import { randomUUID } from "crypto";
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 const PORT = process.env.PORT ?? 3000;
+
+// Temporary storage for completed EPUBs keyed by jobId
+const results = new Map<string, { path: string; filename: string }>();
 
 app.get("/", (_req, res) => {
   res.send(/* html */ `<!DOCTYPE html>
@@ -47,6 +51,24 @@ app.get("/", (_req, res) => {
     }
     button:hover { background: #1d4ed8; }
     button:disabled { background: #333; color: #555; cursor: not-allowed; }
+
+    .progress-wrap { margin-top: 1.25rem; display: none; }
+    .progress-label {
+      display: flex; justify-content: space-between;
+      font-size: 0.8rem; color: #888; margin-bottom: 0.4rem;
+    }
+    .progress-track {
+      width: 100%; height: 6px; background: #2a2a2a; border-radius: 99px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; width: 0%; background: #2563eb; border-radius: 99px;
+      transition: width 0.3s ease;
+    }
+    .chapter-name {
+      margin-top: 0.4rem; font-size: 0.75rem; color: #555;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
     .status { margin-top: 1rem; font-size: 0.85rem; color: #888; text-align: center; min-height: 1.2em; }
     .error { color: #f87171; }
   </style>
@@ -70,77 +92,136 @@ app.get("/", (_req, res) => {
       </div>
       <button type="submit" id="btn">Download EPUB</button>
     </form>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label">
+        <span id="progressText">Starting…</span>
+        <span id="progressCount"></span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="chapter-name" id="chapterName"></div>
+    </div>
+
     <p class="status" id="status"></p>
   </div>
   <script>
     const form = document.getElementById('form');
     const btn = document.getElementById('btn');
     const status = document.getElementById('status');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const progressCount = document.getElementById('progressCount');
+    const chapterName = document.getElementById('chapterName');
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       btn.disabled = true;
       btn.textContent = 'Downloading…';
-      status.textContent = 'Scraping chapters — this may take a few minutes…';
+      status.textContent = '';
       status.className = 'status';
+      progressWrap.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressText.textContent = 'Connecting…';
+      progressCount.textContent = '';
+      chapterName.textContent = '';
 
-      const body = Object.fromEntries(new FormData(form));
-      try {
-        const res = await fetch('/download', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const { error } = await res.json();
-          throw new Error(error);
-        }
-        const blob = await res.blob();
-        const filename = res.headers.get('X-Filename') ?? 'book.epub';
+      const data = Object.fromEntries(new FormData(form));
+      const params = new URLSearchParams({
+        url: data.url,
+        from: data.from || '1',
+        ...(data.to ? { to: data.to } : {}),
+      });
+
+      const es = new EventSource('/stream?' + params.toString());
+
+      es.addEventListener('progress', (e) => {
+        const { current, total, chapterTitle } = JSON.parse(e.data);
+        const pct = Math.round((current / total) * 100);
+        progressBar.style.width = pct + '%';
+        progressText.textContent = 'Downloading chapters…';
+        progressCount.textContent = current + ' / ' + total;
+        chapterName.textContent = chapterTitle;
+      });
+
+      es.addEventListener('done', (e) => {
+        es.close();
+        const { jobId, filename } = JSON.parse(e.data);
+        progressBar.style.width = '100%';
+        progressText.textContent = 'Building EPUB…';
+        progressCount.textContent = '';
+        chapterName.textContent = '';
+
+        // Trigger download
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
+        a.href = '/result/' + jobId;
         a.download = filename;
         a.click();
+
         status.textContent = 'Done! Check your downloads.';
-      } catch (err) {
-        status.textContent = err.message;
-        status.className = 'status error';
-      } finally {
         btn.disabled = false;
         btn.textContent = 'Download EPUB';
-      }
+        progressText.textContent = 'Complete';
+      });
+
+      es.addEventListener('error-event', (e) => {
+        es.close();
+        const { message } = JSON.parse(e.data);
+        status.textContent = message;
+        status.className = 'status error';
+        progressWrap.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = 'Download EPUB';
+      });
+
+      es.onerror = () => {
+        es.close();
+        status.textContent = 'Connection lost. Please try again.';
+        status.className = 'status error';
+        progressWrap.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = 'Download EPUB';
+      };
     });
   </script>
 </body>
 </html>`);
 });
 
-app.post("/download", async (req, res) => {
-  const { url, from, to } = req.body as { url: string; from?: string; to?: string };
+app.get("/stream", async (req, res) => {
+  const { url, from, to } = req.query as { url: string; from?: string; to?: string };
 
   if (!url) {
-    res.status(400).json({ error: "url is required" });
+    res.status(400).end();
     return;
   }
 
   const fromNum = parseInt(from ?? "1", 10);
-  const toNum = to && to !== "" ? parseInt(to, 10) : null;
+  const toNum = to ? parseInt(to, 10) : null;
 
-  if (isNaN(fromNum) || fromNum < 1) {
-    res.status(400).json({ error: "from must be a positive integer" });
-    return;
-  }
-  if (toNum !== null && toNum < fromNum) {
-    res.status(400).json({ error: "to must be >= from" });
-    return;
-  }
+  // Set up SSE
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const send = (event: string, data: object) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
 
   let tmpPath: string | null = null;
   try {
-    const { meta, chapters } = await scrapeBook(url, fromNum, toNum, true);
+    const { meta, chapters } = await scrapeBook(
+      url,
+      fromNum,
+      toNum,
+      true,
+      (current, total, chapterTitle) => send("progress", { current, total, chapterTitle })
+    );
 
     if (chapters.length === 0) {
-      res.status(422).json({ error: "No chapters were downloaded" });
+      send("error-event", { message: "No chapters were downloaded" });
+      res.end();
       return;
     }
 
@@ -152,21 +233,43 @@ app.post("/download", async (req, res) => {
     const range = toNum ? `_ch${fromNum}-${toNum}` : fromNum > 1 ? `_ch${fromNum}+` : "";
     const filename = `${slug}${range}.epub`;
 
-    tmpPath = join(tmpdir(), `${Date.now()}-${filename}`);
+    const jobId = randomUUID();
+    tmpPath = join(tmpdir(), `${jobId}.epub`);
     await buildEpub(meta, chapters, tmpPath);
 
-    res.setHeader("Content-Type", "application/epub+zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("X-Filename", filename);
-    res.sendFile(tmpPath, () => {
-      if (tmpPath) unlink(tmpPath).catch(() => {});
-    });
+    results.set(jobId, { path: tmpPath, filename });
+    // Clean up after 5 minutes if not downloaded
+    setTimeout(() => {
+      const entry = results.get(jobId);
+      if (entry) {
+        results.delete(jobId);
+        unlink(entry.path).catch(() => {});
+      }
+    }, 5 * 60 * 1000);
+
+    send("done", { jobId, filename });
+    res.end();
   } catch (err) {
     if (tmpPath) unlink(tmpPath).catch(() => {});
     const message = err instanceof Error ? err.message : String(err);
-    console.error("Download error:", message);
-    res.status(500).json({ error: message });
+    console.error("Stream error:", message);
+    send("error-event", { message });
+    res.end();
   }
+});
+
+app.get("/result/:jobId", (req, res) => {
+  const entry = results.get(req.params.jobId);
+  if (!entry) {
+    res.status(404).send("File not found or already downloaded");
+    return;
+  }
+  results.delete(req.params.jobId);
+  res.setHeader("Content-Type", "application/epub+zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${entry.filename}"`);
+  res.sendFile(entry.path, () => {
+    unlink(entry.path).catch(() => {});
+  });
 });
 
 app.listen(PORT, () => {
